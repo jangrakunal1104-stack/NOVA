@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+
+<link rel="stylesheet" href="file:///home/panda/ai-stack/NOVA/ui/static/dracula.css">
+<script src="file:///home/panda/ai-stack/NOVA/ui/static/highlight.min.js"></script>
+
+<style>
+body {
+    background-color: #0c0c0c;
+    color: #e6e6e6;
+    font-family: "Fira Code", monospace;
+    margin: 0;
+    padding: 12px;
+}
+
+.msg {
+    margin-bottom: 14px;
+}
+
+.user_label {
+    color: #8be9fd;
+    font-size: 0.85em;
+    margin-bottom: 4px;
+}
+
+.nova_label {
+    color: #50fa7b;
+    font-size: 0.85em;
+    margin-bottom: 4px;
+}
+
+pre {
+    background: #1e1e1e;
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+}
+
+code {
+    font-family: "Fira Code", monospace;
+}
+</style>
+
+<script>
+let chatDiv = null;
+let streamDiv = null;
+
+window.onload = () => {
+    chatDiv = document.getElementById("chat");
+    streamDiv = document.getElementById("stream");
+};
+
+function appendToken(text) {
+    if (!streamDiv) return;
+    streamDiv.innerHTML += text;
+}
+
+function clearStream() {
+    if (!streamDiv) return;
+    streamDiv.innerHTML = "";
+}
+
+function finalizeMessage(html) {
+    if (!chatDiv) return;
+    chatDiv.innerHTML += html;
+    clearStream();
+
+    if (window.hljs) {
+        hljs.highlightAll();
+    }
+}
+</script>
+
+</head>
+<body>
+  <div id="chat"></div>
+  <div id="stream"></div>
+</body>
+</html>
+
+<div class="msg">
+  <div class="user_label">Mr. Black</div>
+  <div>Hello <b>world</b>
+
+<pre><code class="language-python">print(&#x27;hello&#x27;)
+</code></pre></div>
+</div>
+
+<div class="msg">
+  <div class="nova_label">Nova</div>
+  <div>This is a test reply.
+
+<pre><code class="language-js">console.log(&#x27;ok&#x27;)
+</code></pre></div>
+</div>

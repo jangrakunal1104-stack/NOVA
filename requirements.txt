@@ -1,0 +1,13 @@
+torch
+transformers
+accelerate
+safetensors
+pillow
+opencv-python
+pytesseract
+numpy
+scipy
+requests
+pyqt6
+sentencepiece
+protobuf

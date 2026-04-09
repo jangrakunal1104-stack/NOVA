@@ -1,0 +1,48 @@
+/* Dracula Theme for Highlight.js */
+
+.hljs {
+  display: block;
+  overflow-x: auto;
+  padding: 1em;
+  background: #282a36;
+  color: #f8f8f2;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link {
+  color: #ff79c6;
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-class .hljs-title {
+  color: #8be9fd;
+}
+
+.hljs-attr,
+.hljs-number,
+.hljs-meta .hljs-meta-string,
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-title,
+.hljs-name {
+  color: #f1fa8c;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #6272a4;
+  font-style: italic;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: bold;
+}

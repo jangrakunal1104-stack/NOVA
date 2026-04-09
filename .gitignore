@@ -1,0 +1,7 @@
+genv/
+__pycache__/
+*.pyc
+models/
+outputs/
+*.log
+.env
