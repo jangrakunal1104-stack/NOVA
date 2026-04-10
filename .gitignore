@@ -5,3 +5,5 @@ models/
 outputs/
 *.log
 .env
+test_*.txt
+*.db
