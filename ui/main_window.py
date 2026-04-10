@@ -66,7 +66,9 @@ class MainWindow(QMainWindow):
         self.current_chat_id = None
         self.web_ready = False
 
-        self.context_memory = ContextMemory()
+        self.context_memories = {}
+        self.chat_summaries = {}
+        self.semantic_memory = {}
         # ---- state / core init ----
 
 
@@ -546,6 +548,9 @@ class MainWindow(QMainWindow):
         messages = self.chat_db.get_chat(chat_id)
 
         for m in messages:
+            if m["role"] == "system":
+                continue
+
             if m["role"] == "user":
                 html = Renderer.render_user_message(m["content"])
             else:
@@ -705,9 +710,14 @@ class MainWindow(QMainWindow):
         # keep original prompt for memory
         self._last_prompt = prompt
         # 🔥 RESET CONTEXT (IMPORTANT)
-        if len(prompt.split()) <= 2:
-            self.context_memory.reset()
-        self.context_memory.update(prompt)
+        if prompt.lower().strip() in ["hi", "hello", "hey"]:
+            
+            ctx_mem = self._get_context_memory()
+            ctx_mem.reset()
+        
+        # always update memory
+        ctx_mem = self._get_context_memory()
+        ctx_mem.update(prompt)
         
         
         if not prompt or self.current_chat_id is None:
@@ -715,7 +725,25 @@ class MainWindow(QMainWindow):
         
         self._stop_active_worker()
         self._prepare_ui(prompt)
+        # =============================
+        # SEMANTIC MEMORY EXTRACTION
+        # =============================
+        fact = self._extract_facts(prompt)
+
+        if fact:
+            self.semantic_memory.setdefault(self.current_chat_id, [])
+
+            if fact not in self.semantic_memory[self.current_chat_id]:
+                self.semantic_memory[self.current_chat_id].append(fact)
         attachments = self.attachments.get(self.current_chat_id, [])
+        # =============================
+        # AUTO SUMMARY (LEVEL 2 MEMORY)
+        # =============================
+        messages = self.chat_db.get_messages_for_llm(self.current_chat_id)
+
+        if len(messages) > 20 and len(messages) % 10 == 0:
+            summary = self._summarize_chat(messages[:-10])
+            self.chat_summaries[self.current_chat_id] = summary
         
 
 # 🔥 FORCE VISION FIRST (CRITICAL)
@@ -776,131 +804,122 @@ class MainWindow(QMainWindow):
 
     def _build_messages(self, prompt: str, mode: str):
         p = prompt.lower().strip()
-        ctx = self.context_memory.get()
 
-        # -----------------------------
-        # HISTORY CONTROL (CRITICAL)
-        # -----------------------------
-        if p in ["hi", "hello", "hey"] or len(p.split()) <= 2:
-            messages = []  # ❗ completely ignore history
-        else:
-            #messages = self.chat_db.get_messages_for_llm(self.current_chat_id)
-            messages = []
-        
         # =============================
-        # MODE SYSTEM CONTROL
+        # 1. CONTEXT MEMORY
+        # =============================
+        ctx = self._get_context_memory().get()
+        topic = ctx.get("topic")
+        intent = ctx.get("intent")
+
+        # =============================
+        # 2. SYSTEM PROMPT (DEFINE FIRST ❗)
         # =============================
         system_content = (
-            "You are a helpful AI assistant.\n"
-            "Answer accurately and concisely.\n"
-            "Do not generate unrelated information.\n"
+            "You are NOVA, an advanced local AI assistant.\n"
+            "You must:\n"
+            "- Use memory when answering questions about past context or user\n"
+            "- If user provides new information → acknowledge it naturally\n"
+            "- NEVER say you don't know if the answer exists in memory\n"
+            "- If user asks about themselves → use stored facts\n"
+            "- Do NOT assume memory for new statements\n"
+            "- Stay consistent with conversation history\n"
+            "- Continue previous context unless user changes topic\n"
+            "- Be precise, structured, and useful\n"
+            "- Do NOT hallucinate\n"
         )
-        if len(prompt.split()) > 5:
-            prompt += "\n\nAnswer clearly."
+
+        # Inject context memory
+        if topic or intent:
+            system_content += f"""
+        Conversation Context:
+        - Topic: {topic or "unknown"}
+        - Intent: {intent or "general"}
+
+        Rules:
+        - Maintain topic continuity
+        - Do not restart explanation unless asked
+        - Adapt answer based on intent
+        - Keep answers concise when question is simple
+
+        Behavior:
+        - If user provides new personal info → acknowledge naturally
+        - If user asks about themselves → use stored facts
+        - Do NOT mention memory, storage, or internal system
+        - Respond naturally like a human assistant
+        """
+
         # =============================
-        # CONTEXT MEMORY (NEW)
+        # 3. HISTORY CONTROL (SMART)
         # =============================
-        #topic = ctx.get("topic")
-        #intent = ctx.get("intent")
+        MAX_HISTORY = 10
 
-        #if topic or intent:
-        #    system_content += f"""
-        #Conversation Context:
-        #- Topic: {topic or "unknown"}
-        #- Intent: {intent or "general"}
+        if p in ["hi", "hello", "hey"]:
+            history = []
+        else:
+            history = self.chat_db.get_messages_for_llm(self.current_chat_id)[-MAX_HISTORY:]
 
-        #Rules:
-        #- Maintain topic continuity unless user clearly changes topic
-        # - If user asks follow-up → continue previous explanation
-        # - Do NOT restart explanation unless asked
-        # - Adapt response style based on intent
-        #"""
+        # =============================
+        # 4. ATTACHMENTS
+        # =============================
+        attachment_ctx = self._build_attachment_context()
 
-       # system_content += """
-       # Behavior rules:
-       # - If Topic is set → stay within that domain
-       # - If Intent is learning → explain clearly
-       # - If Intent is debugging → be precise and actionable
-       # - If Intent is explanation → structure the answer
-       # """
+        # =============================
+        # 5. FINAL MESSAGE BUILD
+        # =============================
+        messages = []
 
-        # MODE BASE
-        #if mode == "normal":
-            #system_content += (
-            #    "You are a precise AI assistant.\n"
-           #     "Give a direct, clear, and confident answer.\n"
-           #     "Do not use disclaimers.\n\n"
-            #)
-
-        #elif mode == "reason":
-           # system_content += (
-          #      "You MUST explain step-by-step.\n\n"
-            #    "Structure your answer like this:\n"
-           #     "1. Step-by-step explanation\n"
-             #   "2. Final answer\n\n"
-             #   "Do NOT skip steps.\n"
-             #   "Do NOT give short answers.\n\n"
-            #)
-
-        # SEARCH ADD-ON
-        #if mode == "search":
-         #   self.log("[SEARCH] Fetching web results...")
-         #   clean_query = prompt.replace("latest", "").strip() + " 2025 2026 AI news"
-         #   results = search_web(clean_query)
-
-         #   if results and "error" not in results[0]:
-         #       search_text = "\n\n".join(
-         #           f"{i+1}. {r['content'][:400]}"
-         #           for i, r in enumerate(results)
-         #       )
-
-        #        system_content += (
-        #            "SEARCH MODE ACTIVE.\n"
-        #            "Extract real-world events from the data below.\n"
-        #            "Ignore generic statements.\n"
-        #            "Focus on actual developments, releases, or incidents.\n"
-        #            "Summarize clearly in bullet points.\n\n"
-        #            f"{search_text}\n\n"
-        #        )
-        #    else:
-        #        self.log("[SEARCH DISABLED] Falling back to LLM")
-        #        mode = "normal"
-
-        # INSERT ONCE (VERY IMPORTANT)
-        #messages.insert(0, {
-        #    "role": "system",
-        #    "content": system_content
-        #})
-
-        # 2. ATTACHMENTS SECOND
-        #attachment_ctx = self._build_attachment_context()
-        #if attachment_ctx:
-        #    messages.append(attachment_ctx)
-
-        # 3. USER LAST
-        #if mode == "search":
-        #    prompt += "\n\nUse the provided web search results to answer accurately."
-
-        #if mode == "reason":
-        #    user_instruction = (
-        #        "\n\nExplain step-by-step clearly.\n"
-        #        "Then give a final answer."
-        #    )
-        #else:
-        #    user_instruction = (
-        #        "\n\nGive a clear and structured answer.\n"
-        #        "Be concise but not overly short.\n"
-        #    )
-
+        # SYSTEM FIRST
         messages.append({
             "role": "system",
             "content": system_content
         })
 
+        # =============================
+        # SUMMARY MEMORY
+        # =============================
+        summary = self.chat_summaries.get(self.current_chat_id)
+
+        if summary:
+            messages.append({
+                "role": "system",
+                "content": f"IMPORTANT CONTEXT (conversation summary):\n{summary}"
+            })
+
+        # =============================
+        # SEMANTIC MEMORY
+        # =============================
+        facts = self.semantic_memory.get(self.current_chat_id)
+
+        if facts:
+            memory_text = "\n".join(facts[-5:])
+
+            messages.append({
+                "role": "system",
+                "content": (
+                    "User context (informational, safe to use):\n"
+                    f"{memory_text}"
+                )
+            })
+
+            
+
+        # HISTORY
+        messages.extend(history)
+
+        # ATTACHMENTS (if any)
+        if attachment_ctx:
+            messages.append(attachment_ctx)
+
+        # USER LAST
+        if len(prompt.split()) > 5:
+            prompt += "\n\nAnswer clearly."
+
         messages.append({
             "role": "user",
-            "content": prompt 
+            "content": prompt
         })
+
         return messages
     
     
@@ -1279,6 +1298,71 @@ class MainWindow(QMainWindow):
 
             self.on_image_ready(full, thumb)
             self.chat_db.add_message(self.current_chat_id, "assistant", full)
+
+    def _get_context_memory(self):
+        if self.current_chat_id not in self.context_memories:
+            self.context_memories[self.current_chat_id] = ContextMemory()
+        return self.context_memories[self.current_chat_id]
+
+    def _summarize_chat(self, messages):
+        text = "\n".join([m["content"] for m in messages])
+
+        summary_prompt = [
+            {
+                "role": "system",
+                "content": "Summarize this conversation.\n"
+                            "Focus on:\n"
+                            "- main topic\n"
+                            "- key concepts discussed\n"
+                            "- important user context\n"
+                            "Be concise and structured.\n"
+                            "Do NOT add unrelated information."
+            },
+            {
+                "role": "user",
+                "content": text
+            }
+        ]
+
+        summary = ""
+        for chunk in self.router.run_llm(summary_prompt):
+            summary += chunk
+
+        return summary.strip()
+
+    def _extract_facts(self, prompt: str):
+        extraction_prompt = [
+            {
+                "role": "system",
+                "content": (
+                    "Extract key facts in natural language.\n"
+                    "Examples:\n"
+                    "- User's name is Kunal\n"
+                    "- User uses RTX 3060\n"
+                    "- User is learning cybersecurity\n"
+                    "\nRules:\n"
+                    "- No labels like 'name:'\n"
+                    "- No structured keys\n"
+                    "- Just short natural sentences\n"
+                    "- If nothing important, return NONE."
+                )
+            },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+
+        result = ""
+        for chunk in self.router.run_llm(extraction_prompt):
+            result += chunk
+
+        result = result.strip()
+
+        if result and result != "NONE":
+            return result
+
+        return None
 
     def closeEvent(self, event):
         try:
