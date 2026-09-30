@@ -49,9 +49,11 @@ def test_prompt_input_guarded_during_background_work():
     # Send button being disabled didn't stop Enter/returnPressed from
     # re-triggering send_message() while a worker was already running.
     # prompt_input itself must be disabled/re-enabled around every
-    # worker/background-task lifecycle.
-    assert SRC.count("prompt_input.setEnabled(False)") == 4
-    assert SRC.count("prompt_input.setEnabled(True)") == 6
+    # worker/background-task lifecycle -- 5 disable sites (llm/search/
+    # vision/diffusion/agent) and 7 re-enable sites (one extra re-enable
+    # path exists for the stop button and error handling).
+    assert SRC.count("prompt_input.setEnabled(False)") == 5
+    assert SRC.count("prompt_input.setEnabled(True)") == 7
 
 
 def test_on_image_ready_reenables_send_button_on_success_path():
@@ -73,6 +75,47 @@ def test_settings_and_memory_paths_anchored_to_base_dir():
     # regressions traced back to main_window.py not anchoring to BASE_DIR.
     assert "from config.config import SETTINGS_PATH, BASE_DIR" in SRC
     assert 'os.path.join(BASE_DIR, "nova_memory_db")' in SRC
+
+
+def test_agent_mode_is_off_by_default():
+    idx = SRC.index("self.agent_mode = False")
+    assert idx > -1
+
+
+def test_agent_mode_bypasses_brain_routing():
+    # Agent Mode must be an explicit, user-toggled branch that returns
+    # early -- it must never be something Brain's keyword matching can
+    # trigger on its own, since it can run shell commands.
+    idx_send = SRC.index("def send_message")
+    idx_next_def = SRC.index("\n    def ", idx_send + 10)
+    body = SRC[idx_send:idx_next_def]
+    assert "if self.agent_mode:" in body
+    assert "_run_agent_turn()" in body
+
+
+def test_agent_worker_signals_are_all_wired():
+    idx = SRC.index("def _run_agent_turn")
+    idx_next_def = SRC.index("\n    def ", idx + 10)
+    body = SRC[idx:idx_next_def]
+    assert "AgentWorker(" in body
+    for signal in ("step.connect", "approval_requested.connect", "finished.connect", "error.connect"):
+        assert signal in body, f"{signal} not wired in _run_agent_turn"
+
+
+def test_agent_approval_dialog_blocks_worker_until_answered():
+    # The whole point of the approval mechanism (see ui/agent_worker.py)
+    # is that the worker thread is sitting in event.wait() until this
+    # slot answers -- if event.set() were ever skipped (e.g. an
+    # exception before it), the worker would hang forever. It must be in
+    # a finally block.
+    idx = SRC.index("def _on_agent_approval_requested")
+    idx_next_def = SRC.index("\n    def ", idx + 10)
+    body = SRC[idx:idx_next_def]
+    assert "finally:" in body
+    assert "event.set()" in body
+    finally_pos = body.index("finally:")
+    set_pos = body.index("event.set()")
+    assert set_pos > finally_pos
 
 
 def test_chat_list_does_not_bake_id_into_displayed_title():

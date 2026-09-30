@@ -19,6 +19,7 @@ from PySide6.QtWebChannel import QWebChannel
 from core.chat_manager import ChatManager
 from ui.llm_worker import LLMWorker
 from ui.task_worker import TaskWorker
+from ui.agent_worker import AgentWorker
 from core.image_engine import ImageEngine
 from core.brain import Brain
 from core.vector_memory import VectorMemory
@@ -68,6 +69,12 @@ class MainWindow(QMainWindow):
         self.active_worker = None
         self._bg_on_success = None
         self._bg_on_error = None
+        # Agent Mode: off by default. When on, send_message() routes the
+        # turn through AgentWorker (tool-using loop) instead of Brain's
+        # normal chat/search/vision/diffusion routing. See
+        # core/agent_engine.py for the loop and core/agent_tools.py for
+        # what it's allowed to touch.
+        self.agent_mode = False
         self.image_engine = ImageEngine()
         self.attachment_handler = AttachmentHandler(self)
         self.chat_ui = ChatManagerUI(self)
@@ -176,6 +183,29 @@ class MainWindow(QMainWindow):
         # RIGHT - Options + Logs
         right = QVBoxLayout()
         right.addWidget(QLabel("Chat Options"))
+
+        # Agent Mode: lets NOVA read/write files and run shell commands
+        # (approval-gated -- see core/agent_engine.py) instead of only
+        # chatting. Off by default; the button's own label always shows
+        # the current state so it's never ambiguous whether it's live.
+        self.agent_mode_btn = QPushButton("🤖 Agent Mode: OFF")
+        self.agent_mode_btn.setCheckable(True)
+        self.agent_mode_btn.setToolTip(
+            "When ON, NOVA can read/write files and run shell commands in your "
+            "home directory. Writes and risky commands still need your approval."
+        )
+        self.agent_mode_btn.clicked.connect(self.on_toggle_agent_mode)
+        right.addWidget(self.agent_mode_btn)
+
+        self.suggest_improvements_btn = QPushButton("🛠️ Suggest Improvements")
+        self.suggest_improvements_btn.setToolTip(
+            "Ask NOVA to review its own codebase and write proposed improvements "
+            "into self_improvement_proposals/ for you to review -- it will not "
+            "edit its own live source directly."
+        )
+        self.suggest_improvements_btn.clicked.connect(self.on_suggest_improvements)
+        right.addWidget(self.suggest_improvements_btn)
+
         right.addSpacing(8)
         right.addWidget(QLabel("Logs"))
         
@@ -317,6 +347,41 @@ class MainWindow(QMainWindow):
                 f.write(f"{m['role'].upper()}:\n{m['content']}\n\n")
 
         self.log(f"[CHAT] Exported to {path}")
+
+    def on_toggle_agent_mode(self, checked: bool):
+        self.agent_mode = checked
+        self.agent_mode_btn.setText("🤖 Agent Mode: ON" if checked else "🤖 Agent Mode: OFF")
+        if checked:
+            self.log(
+                "[AGENT] Agent Mode enabled — NOVA can now read/write files and run "
+                "shell commands in your home directory. Writes and anything beyond "
+                "a small read-only command allowlist still need your approval."
+            )
+        else:
+            self.log("[AGENT] Agent Mode disabled.")
+
+    def on_suggest_improvements(self):
+        if self.current_chat_id is None:
+            return
+
+        if not self.agent_mode:
+            self.agent_mode_btn.setChecked(True)
+            self.on_toggle_agent_mode(True)
+
+        prompt = (
+            "Review NOVA's own codebase for possible improvements -- bugs, unclear "
+            "code, missing error handling, performance, or design issues. Use "
+            "list_dir and read_file to look through core/ and ui/ as needed (you "
+            "don't need to read every file -- prioritize based on what you find). "
+            "When you're done, WRITE your findings into self_improvement_proposals/ "
+            "using write_file: one .md file per suggestion explaining the issue and "
+            "the proposed fix, plus the full proposed replacement file content in a "
+            "second file if it's a concrete rewrite. Do not just describe the "
+            "changes in chat -- the proposals must actually be written to that "
+            "folder so Mr. Black can review them."
+        )
+        self.prompt_input.setText(prompt)
+        self.send_message()
 
     def _clear_attachments(self):
         if not self.current_chat_id:
@@ -501,6 +566,14 @@ class MainWindow(QMainWindow):
         if not prompt or self.current_chat_id is None:
             return
 
+        if self.agent_mode:
+            # Skips Brain routing entirely -- Agent Mode is an explicit,
+            # user-toggled mode, not something a keyword match should be
+            # able to trigger silently, since it can run shell commands.
+            self._prepare_ui(prompt)
+            self._run_agent_turn()
+            return
+
         # Special greeting handling
         if prompt.lower().strip() in ["hi", "hello", "hey"]:
             self._prepare_ui(prompt)
@@ -681,7 +754,95 @@ class MainWindow(QMainWindow):
         if cb:
             cb(msg)
 
-    
+    # =============================
+    # AGENT MODE (tool-using loop)
+    # =============================
+    def _run_agent_turn(self):
+        """
+        Kicks off one Agent Mode turn on a background thread (AgentWorker).
+        _prepare_ui() has already rendered the user's message and saved it
+        to chat_db/vector_memory by the time this runs (see send_message).
+        """
+        self._stop_active_worker()
+
+        history = self.chat_db.get_messages_for_llm(self.current_chat_id)
+        history = [m for m in history if (m.get("content") or "").strip()]
+
+        self.log("[AGENT] Starting agent turn...")
+
+        self.send_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.prompt_input.setEnabled(False)
+
+        worker = AgentWorker(self.router, history)
+        worker.step.connect(self._on_agent_step)
+        worker.approval_requested.connect(self._on_agent_approval_requested)
+        worker.finished.connect(self._on_agent_finished)
+        worker.error.connect(self._on_agent_error)
+        self.active_worker = worker
+        worker.start()
+
+    @Slot(str, str)
+    def _on_agent_step(self, kind: str, text: str):
+        """Renders each step of the agent loop into the chat as it
+        happens, so tool calls and their results are visible, not just
+        the final answer -- this is meant to be legible, not a hidden
+        black box running commands on the user's machine."""
+        if kind == "tool_call":
+            self.log(f"[AGENT] 🔧 {text}")
+            self.run_js(Renderer.js_finalize(
+                Renderer.render_nova_message(f"🔧 **Running:** `{text}`")
+            ))
+        elif kind == "tool_result":
+            preview = text if len(text) <= 800 else text[:800] + "\n…[truncated for display; the model saw the full result]"
+            self.run_js(Renderer.js_finalize(
+                Renderer.render_nova_message(f"```\n{preview}\n```")
+            ))
+        elif kind == "final":
+            self.run_js(Renderer.js_finalize(Renderer.render_nova_message(text)))
+            if self.current_chat_id is not None:
+                self.chat_db.add_message(self.current_chat_id, "assistant", text)
+
+    @Slot(str, str, object)
+    def _on_agent_approval_requested(self, kind: str, summary: str, box_event):
+        """
+        Runs on the GUI thread (queued there by Qt because this slot is a
+        bound method of a QObject living on that thread -- see
+        ui/agent_worker.py's module docstring for the full mechanism).
+        Shows a real confirmation dialog and unblocks the worker thread,
+        which has been waiting on `event` since it emitted this signal.
+        """
+        box, event = box_event
+        try:
+            reply = QMessageBox.question(
+                self,
+                "NOVA Agent — Approval Needed",
+                f"NOVA wants to:\n\n{summary}\n\nAllow this?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            box["approved"] = (reply == QMessageBox.Yes)
+        finally:
+            event.set()
+
+    @Slot()
+    def _on_agent_finished(self):
+        self.log("[AGENT] Agent turn finished")
+        self._stop_active_worker()
+        self.send_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.prompt_input.setEnabled(True)
+
+    @Slot(str)
+    def _on_agent_error(self, msg: str):
+        # finished is always emitted right after this (AgentWorker.run()'s
+        # finally block), which does the actual cleanup/button re-enable --
+        # same two-signal pattern on_llm_error/on_llm_finished already use.
+        self.log(f"[AGENT ERROR] {msg}")
+        self.run_js(Renderer.js_finalize(
+            Renderer.render_nova_message(f"❌ Agent Mode error: {msg}")
+        ))
+
+
 
     # =============================
     # YOUR ORIGINAL METHODS (Kept 100% intact)
