@@ -1,8 +1,15 @@
+import os
 import sqlite3
 from datetime import datetime
 import time
 
-DB_FILE = "chats.db"
+from config.config import BASE_DIR
+
+# Anchored to the repo root, not the process's current working directory —
+# otherwise launching NOVA from a different folder (a shortcut, a systemd
+# unit, a different terminal tab) would silently start a brand-new, empty
+# chat database instead of using the real one.
+DB_FILE = os.path.join(BASE_DIR, "chats.db")
 
 class ChatManager:
     def __init__(self):

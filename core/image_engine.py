@@ -12,7 +12,7 @@ MODELS_DIR = os.path.join(BASE_DIR, "models")
 DIFFUSION_DIR = os.path.join(MODELS_DIR, "diffusion")
 OUTPUT_DIR = os.path.join(BASE_DIR, "outputs", "images")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-SD15_PATH = "/home/panda/ai-stack/NOVA/models/diffusion/sd15"
+SD15_PATH = os.path.join(DIFFUSION_DIR, "sd15")
 def image_to_base64(img):
     from io import BytesIO
     buf = BytesIO()
@@ -76,9 +76,9 @@ class ImageEngine:
         from diffusers import StableDiffusionPipeline
         self.unload()
 
-        
-
         try:
+            print(f"[DIFFUSION] Loading in HIGH-QUALITY mode (RTX 3060 12GB)...")
+
             self.pipeline = StableDiffusionPipeline.from_pretrained(
                 path,
                 torch_dtype=torch.float16,
@@ -86,23 +86,21 @@ class ImageEngine:
                 requires_safety_checker=False,
             )
 
-            
-
-            # MEMORY OPTIMIZATIONS (MANDATORY)
-            self.pipeline.enable_attention_slicing()
+            # Full GPU - No low VRAM mode
+            self.pipeline.to("cuda")
             self.pipeline.enable_vae_slicing()
-            self.pipeline.enable_model_cpu_offload()
-
-            
+            self.pipeline.enable_attention_slicing()
+            # Removed xformers (causes error) and cpu_offload
 
             self.model_path = path
             self.device = device
+            print("[DIFFUSION] ✅ HIGH QUALITY loaded on GPU")
             return {"status": "ok"}
 
         except Exception as e:
+            print(f"[DIFFUSION LOAD ERROR] {e}")
             self.unload()
             return {"status": "error", "error": str(e)}
-
     def generate_image(self, **kw):
         
         if torch.cuda.is_available():
@@ -117,11 +115,11 @@ class ImageEngine:
             "blurry, low quality, distorted, bad anatomy, artifacts, noise, grainy, deformed"
         )
         
-        width = min(int(kw.get("width", 768)), 768)
-        height = min(int(kw.get("height", 768)), 768)
-        steps = int(kw.get("steps", 35))
+        width = min(int(kw.get("width", 768)), 1024)
+        height = min(int(kw.get("height", 768)), 1024)
+        steps = int(kw.get("steps", 50))
 
-        cfg = float(kw.get("cfg", 8.0))
+        cfg = float(kw.get("cfg", 7.5))
 
         seed = kw.get("seed")
         gen = None

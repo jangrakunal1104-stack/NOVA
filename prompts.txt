@@ -1,0 +1,24 @@
+Phase 1: Fact Absorption (in current chat)
+
+    "Remember this important fact: I am currently deep into Linux kernel exploitation and want to master pwn challenges."
+    "My favorite RE tool is Ghidra because I hate bloated GUIs. I love minimal terminal tools."
+    "Goal update: I want to become the best at binary exploitation in India this year."
+
+Phase 2: Immediate Recall
+4. "What do you remember about my current focus areas and tools?"
+5. "Tell me everything you know about me right now."
+
+Phase 3: Episodic + Long-term Persistence Test
+6. Close NOVA completely → reopen → create new chat
+7. "Do you still remember my goals about kernel exploitation and my preferred RE tool?"
+
+Phase 4: Profile & Contextual Recall
+8. "What are my biggest goals and preferences?"
+9. "From now on always call me Sir or Mr. Black in every response."
+10. "Summarize everything you know about me from our past conversations."
+
+def summarize_chat(self, chat_id: str, messages: List[Dict]):
+        if len(messages) < 4:
+            return
+        summary = f"Chat {chat_id}: User is deep into Linux kernel exploitation, mastering pwn challenges, prefers Ghidra, goal = best at binary exploitation in India."
+        self.add_to_memory(summary, role="system", chat_id=chat_id)

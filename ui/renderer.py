@@ -4,19 +4,11 @@ from string import Template
 import re
 import html
 import base64
-from matplotlib.pylab import full
 
 CODE_BLOCK_RE = re.compile(r"```(\w+)?\n(.*?)```", re.DOTALL)
 
-INLINE_CODE_FIX_RE = re.compile(
-    r"```(\w+)\s+(.*?)```",
-    re.DOTALL
-)
-
-
 class Renderer:
     ROOT = Path(__file__).resolve().parent
-
     STATIC = ROOT / "static"
     DRACULA_CSS = STATIC / "dracula.css"
     HLJS_JS = STATIC / "highlight.min.js"
@@ -26,9 +18,6 @@ class Renderer:
     def _file_url(path: Path) -> str:
         return f"file://{path.resolve()}"
 
-    # ------------------------------------------------------------------
-    # BASE HTML
-    # ------------------------------------------------------------------
     @staticmethod
     def base_html() -> str:
         dracula = Renderer._file_url(Renderer.DRACULA_CSS)
@@ -36,272 +25,211 @@ class Renderer:
         qweb = "qrc:///qtwebchannel/qwebchannel.js"
         bridge = Renderer._file_url(Renderer.STATIC / "bridge.js")
 
-        tpl = Template("""
+        html = f"""
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="UTF-8">
-
-            <link rel="stylesheet" href="$dracula">
-            <script src="$hljs"></script>
-            <script src="$qweb"></script>
-            <script src="$bridge"></script>
-
-            <script>
-            /* ===============================
-            QT WEBCHANNEL INIT
-            =============================== */
-            function initQtBridge() {
-                if (typeof qt === "undefined" || !qt.webChannelTransport) {
-                    setTimeout(initQtBridge, 300);
-                    return;
-                }
-
-                new QWebChannel(qt.webChannelTransport, function(channel) {
-                    window.qt = channel.objects.qt;
-                    console.log("QWebChannel READY");
-                });
-            }
-            initQtBridge();
-
-            /* ===============================
-            DOM HELPERS
-            =============================== */
-            function getChatDiv() {
-                return document.getElementById("chat");
-            }
-
-            function getStreamDiv() {
-                return document.getElementById("stream");
-            }
-
-            /* ===============================
-            IMAGE HANDLER
-            =============================== */
-            function openImage(path) {
-                if (window.qt && typeof qt.openImage === "function") {
-                    qt.openImage(path);
-                } else {
-                    window.open(path, "_blank");
-                }
-            }
-
-            /* ===============================
-            STREAMING (GLOBAL SAFE)
-            =============================== */
-            window.appendToken = function(text) {
-                const streamDiv = getStreamDiv();
-                const chatDiv = getChatDiv();
-
-                if (!streamDiv || !text) return;
-
-                const escaped = text
-                    .replace(/&/g, "&amp;")
-                    .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;")
-                    .split(String.fromCharCode(10)).join("<br>");
-
-                streamDiv.insertAdjacentHTML("beforeend", escaped);
-
-                if (chatDiv) {
-                    chatDiv.scrollTop = chatDiv.scrollHeight;
-                }
-            };
-
-            window.clearStream = function() {
-                const streamDiv = getStreamDiv();
-                if (streamDiv) streamDiv.innerHTML = "";
-            };
-
-            /* ===============================
-            FINALIZE
-            =============================== */
-            window.finalizeMessage = function(html) {
-                const chatDiv = getChatDiv();
-                if (!chatDiv) return;
-
-                chatDiv.innerHTML += html;
-                chatDiv.scrollTop = chatDiv.scrollHeight;
-
-                window.clearStream();
-
-                if (window.hljs) {
-                    hljs.highlightAll();
-                }
-            };
-            </script>
+            <title>NOVA • Mr. Black</title>
+            <link rel="stylesheet" href="{dracula}">
+            <script src="{hljs}"></script>
+            <script src="{qweb}"></script>
+            <script src="{bridge}"></script>
 
             <style>
-            body {
-                background: #0c0c0c;
-                color: #e6e6e6;
-                font-family: "Fira Code", monospace;
-                margin: 0;
-                padding: 12px;
-            }
+                body {{
+                    background: #050505;
+                    color: #e0e0e0;
+                    font-family: system-ui, sans-serif;
+                    margin:0; padding:12px;
+                    line-height: 1.75;
+                }}
+                .msg {{
+                    margin: 18px 0;
+                    padding: 16px 20px;
+                    border-radius: 12px;
+                    max-width: 92%;
+                }}
+                .user-msg {{ background: #1e40af; margin-left: auto; border-bottom-right-radius: 4px; }}
+                .nova-msg {{ background: #1f2937; margin-right: auto; border-bottom-left-radius: 4px; }}
 
-            .msg {
-                margin: 10px 0;
-                line-height: 1.5;
-            }
+                h2 {{
+                    color: #67e8f9;
+                    font-size: 1.55em;
+                    margin: 1.8em 0 0.8em 0;
+                    border-bottom: 2px solid #334155;
+                    padding-bottom: 10px;
+                }}
 
-            .nova-image {
-                margin: 6px 0;
-            }
+                strong {{ color: #93c5fd; font-weight: 600; }}
 
-            .nova-thumb {
-                border-radius: 8px;
-                border: 1px solid #444;
-                cursor: pointer;
-            }
+                ol {{ padding-left: 1.6em; margin: 14px 0; }}
+                ol li {{ margin: 10px 0; }}
+
+                pre {{
+                    background: #0f172a;
+                    padding: 16px;
+                    border-radius: 10px;
+                    overflow-x: auto;
+                    position: relative;
+                    border: 1px solid #334155;
+                }}
+                code {{
+                    font-family: 'Fira Code', Consolas, monospace;
+                    font-size: 0.95em;
+                }}
+                .copy-btn {{
+                    position: absolute; top: 12px; right: 12px;
+                    background: #1e2937; color: #94a3b8;
+                    border: none; padding: 6px 14px; border-radius: 6px;
+                    cursor: pointer; font-size: 0.82em;
+                }}
+                .copy-btn:hover {{ background: #334155; color: white; }}
             </style>
         </head>
-
         <body>
             <div id="chat"></div>
             <div id="stream"></div>
+
+            <script>
+            function copyCode(btn) {{
+                const code = btn.parentElement.querySelector('code').innerText;
+                navigator.clipboard.writeText(code);
+                const orig = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = orig, 1800);
+            }}
+
+            window.appendToken = function(text) {{
+                const stream = document.getElementById("stream");
+                if (stream && text) {{
+                    stream.innerHTML += text.replace(/\\n/g, "<br>");
+                    document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+                }}
+            }};
+
+            window.clearStream = function() {{
+                const stream = document.getElementById("stream");
+                if (stream) stream.innerHTML = "";
+            }};
+
+            window.finalizeMessage = function(html) {{
+                const chat = document.getElementById("chat");
+                if (chat) {{
+                    chat.innerHTML += html;
+                    chat.scrollTop = chat.scrollHeight;
+                }}
+                window.clearStream();
+                if (typeof hljs !== 'undefined') {{
+                    setTimeout(() => hljs.highlightAll(), 100);
+                }}
+            }};
+
+            window.openImage = function(path) {{
+                path = (path || "").toString().replace(/^["']|["']$/g, "");
+
+                function tryOpen() {{
+                    if (window.qt) {{
+                        if (typeof window.qt.openImage === "function") {{
+                            window.qt.openImage(path);
+                            return true;
+                        }}
+                        if (typeof window.qt.open_image === "function") {{
+                            window.qt.open_image(path);
+                            return true;
+                        }}
+                    }}
+                    return false;
+                }}
+
+                if (tryOpen()) return;
+
+                var attempts = 0;
+                var timer = setInterval(function() {{
+                    attempts = attempts + 1;
+                    if (tryOpen() || attempts >= 10) {{
+                        clearInterval(timer);
+                        if (attempts >= 10) {{
+                            console.warn("openImage: Qt bridge never became ready", path);
+                            window.open("file://" + path, "_blank");
+                        }}
+                    }}
+                }}, 200);
+            }};
+            </script>
         </body>
         </html>
-        """)
-
-        return tpl.substitute(
-            dracula=dracula,
-            hljs=hljs,
-            qweb=qweb,
-            bridge=bridge,
-        )
-
-    # ------------------------------------------------------------------
-    # MESSAGE RENDERERS
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def normalize_code_blocks(text: str) -> str:
-        return INLINE_CODE_FIX_RE.sub(
-            lambda m: f"```{m.group(1)}\n{m.group(2)}\n```",
-            text
-        )
-
-    @staticmethod
-    def render_markdown_code(text: str) -> str:
-        text = Renderer.normalize_code_blocks(text)
-
-        def repl(m):
-            lang = m.group(1) or ""
-            code = html.escape(m.group(2))
-            return f'<pre><code class="language-{lang}">{code}</code></pre>'
-
-        parts = []
-        last = 0
-
-        for m in CODE_BLOCK_RE.finditer(text):
-            # escape text before code block
-            parts.append(html.escape(text[last:m.start()]))
-
-            lang = m.group(1) or ""
-            code = html.escape(m.group(2))
-            parts.append(f'<pre><code class="language-{lang}">{code}</code></pre>')
-
-            last = m.end()
-
-        # escape remaining text
-        parts.append(html.escape(text[last:]))
-
-        rendered = "".join(parts)
-        return rendered.replace("\n", "<br>")
+        """
+        return html
 
     @staticmethod
     def render_user_message(text: str) -> str:
-        return f"""
-        <div class="msg">
-          <div style="color:#8be9fd;font-size:0.85em;">You</div>
-          <div>{text}</div>
-        </div>
-        """
+        return f'<div class="msg user-msg"><strong style="color:#93c5fd;">You</strong><br>{html.escape(text)}</div>'
 
     @staticmethod
     def render_nova_message(text: str) -> str:
-
-        # =============================
-        # IMAGE MESSAGE HANDLING
-        # =============================
         if text.startswith("__IMAGE__::"):
             parts = text.split("::")
-
             if len(parts) == 3:
-                full_path = parts[1]
-                thumb_path = parts[2]
+                return Renderer.render_image(parts[1], parts[2])
 
-                image_html = Renderer.render_image(full_path, thumb_path)
-
-                return f"""
-                <div class="msg">
-                <div style="color:#50fa7b;font-size:0.85em;">Nova</div>
-                <div>{image_html}</div>
-                </div>
-                """
-
-        # -----------------------------
-        # NORMAL TEXT
-        # -----------------------------
         content = Renderer.render_markdown_code(text)
+        return f'<div class="msg nova-msg"><strong style="color:#67e8f9;">Nova</strong><br>{content}</div>'
 
-        return f"""
-        <div class="msg">
-        <div style="color:#50fa7b;font-size:0.85em;">Nova</div>
-        <div>{content}</div>
-        </div>
-        """
-
-    # ------------------------------------------------------------------
-    # IMAGE RENDERER (FINAL)
-    # ------------------------------------------------------------------
     @staticmethod
-    def render_image(full_path: str, thumb_path: str | None, thumb_width: int = 256) -> str:
+    def render_markdown_code(text: str) -> str:
+        # Convert all ### headings to beautiful h2
+        text = re.sub(r'^###\s+(.+?)(:)?$', 
+                     r'<h2>\1</h2>', 
+                     text, flags=re.MULTILINE)
+
+        # Support for #### sub-headings if any
+        text = re.sub(r'^####\s+(.+?)(:)?$', 
+                     r'<h3 style="color:#93c5fd; font-size:1.35em;">\1</h3>', 
+                     text, flags=re.MULTILINE)
+
+        # Bold numbered points like "1. **Cleaning the String**:"
+        text = re.sub(r'(\d+)\.\s+\*\*(.+?)\*\*:?', 
+                     r'<strong>\1. \2:</strong>', text)
+
+        # General bold text
+        text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
+
+        # Code blocks with copy button
+        def repl(m):
+            lang = (m.group(1) or "python").strip()
+            code = html.escape(m.group(2))
+            return f'<pre><code class="language-{lang}">{code}</code><button class="copy-btn" onclick="copyCode(this)">Copy</button></pre>'
+
+        text = CODE_BLOCK_RE.sub(repl, text)
+        return text.replace("\n", "<br>")
+
+    @staticmethod
+    def render_image(full_path: str, thumb_path: str | None, thumb_width: int = 512) -> str:
         full = Path(full_path)
         thumb = Path(thumb_path) if thumb_path else full
 
-        # 🔥 Convert image to base64
-        with open(thumb, "rb") as f:
-            encoded = base64.b64encode(f.read()).decode("utf-8")
+        try:
+            with open(thumb, "rb") as f:
+                encoded = base64.b64encode(f.read()).decode("utf-8")
+            img_src = f"data:image/png;base64,{encoded}"
+        except Exception:
+            img_src = f"file://{full.resolve()}"
 
-        img_src = f"data:image/png;base64,{encoded}"
+        # Custom scheme that Python will intercept
+        open_url = f"nova-image://open?path={full.resolve()}"
 
-        return f"""
-        <div class="msg nova-image">
-            <img
-                src="{img_src}"
-                style="
-                    width: {thumb_width}px;
-                    height: auto;
-                    display: block;
-                    cursor: pointer;
-                    border-radius: 8px;
-                "
-                onclick="openImage('{full.resolve()}')"
-            />
-        </div>
-        """
-
-    # ------------------------------------------------------------------
-    # STREAM HELPERS
-    # ------------------------------------------------------------------
+        return (
+            f'<div class="nova-image">'
+            f'<a href="{open_url}" title="Click to open">'
+            f'<img src="{img_src}" '
+            f'style="max-width:{thumb_width}px;height:auto;border-radius:10px;'
+            f'border:1px solid #475569;cursor:pointer;">'
+            f'</a></div>'
+        )
     @staticmethod
-    def js_clear_stream() -> str:
-        return "if (window.clearStream) clearStream();"
-
+    def js_clear_stream() -> str: return "window.clearStream();"
     @staticmethod
-    def js_append_token(text: str) -> str:
-        return f"""
-        if (window.appendToken) {{
-            appendToken({json.dumps(text)});
-        }}
-        """
-
+    def js_append_token(text: str) -> str: return f"window.appendToken({json.dumps(text)});"
     @staticmethod
-    def js_finalize(html: str) -> str:
-        return f"""
-        if (window.finalizeMessage) {{
-            finalizeMessage({json.dumps(html)});
-        }}
-        """
+    def js_finalize(html: str) -> str: return f"window.finalizeMessage({json.dumps(html)});"

@@ -1,13 +1,32 @@
+# --- UI ---
+PySide6
+
+# --- LLM (GGUF via llama.cpp) ---
+llama-cpp-python
+
+# --- Vision (Qwen2-VL) + Diffusion ---
 torch
 transformers
 accelerate
 safetensors
-pillow
-opencv-python
-pytesseract
-numpy
-scipy
-requests
-pyqt6
+diffusers
 sentencepiece
 protobuf
+pillow
+
+# --- Vector memory (RAG) ---
+chromadb
+sentence-transformers
+
+# --- Live internet access ---
+tavily-python
+
+# --- Config / env ---
+python-dotenv
+
+# --- Misc ---
+numpy
+requests
+
+# --- Testing (run with: pytest) ---
+pytest

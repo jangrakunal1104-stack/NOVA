@@ -1,9 +1,37 @@
+# Python
 genv/
+.venv/
 __pycache__/
 *.pyc
-models/
-outputs/
-*.log
+
+# Secrets / local env
 .env
-test_*.txt
+
+# Local runtime data (chat history, logs)
+*.log
 *.db
+test_*.txt
+
+# Models & generated media (large binaries, machine-specific)
+models/
+mrblack_model/
+outputs/
+llama.cpp/
+
+# Vector memory / embedding stores (regenerated at runtime, not source)
+nova_chroma_db/
+nova_qdrant_storage/
+nova_memory_db/
+nova_memory.json
+nova_vector_memory.faiss
+nova_vector_memory.faiss.pkl
+nova_vector_memory.pkl
+
+# Training datasets (large, not source code)
+datasets/
+nova_final_memory_dataset.jsonl
+
+# Editor / OS junk
+*.swp
+*.bak
+.DS_Store

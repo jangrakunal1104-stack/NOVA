@@ -1,121 +1,66 @@
 # NOVA 🔥
 
-**Local AI Runtime (LLM + Vision + Diffusion + Desktop UI)**
+**Local-first multi-model AI companion (LLM + Vision + Diffusion + live web search + memory)**
 
 ---
 
 ## 🚀 Overview
 
-NOVA is a **fully local multi-modal AI system** that runs entirely offline.
-
-It integrates:
-
-* 🧠 LLM (chat + code)
-* 👁️ Vision (OCR + captioning)
-* 🎨 Image generation (Stable Diffusion)
-* ⚡ Smart routing (intent-based execution)
-* 🖥️ Desktop UI (PySide6 with streaming)
-
-Designed as a **modular AI runtime**, not just a chatbot.
+NOVA is a personal AI runtime built around a locally-hosted fine-tuned GGUF model, with vision and image
+generation add-ons, persistent vector memory, and live internet access via Tavily. It runs as a desktop
+app (PySide6) with a streaming chat UI.
 
 ---
 
 ## ⚡ Features
 
 * ✅ Token-by-token streaming responses
-* ✅ Multi-model routing (chat / code / vision / diffusion)
-* ✅ OCR → clean code reconstruction
-* ✅ Image generation with prompt enhancement
-* ✅ File attachments (text + images)
-* ✅ Chat history (SQLite)
-* ✅ GPU-aware execution + VRAM monitoring
-* ✅ Fully offline (no API dependency)
+* ✅ Local GGUF chat model (llama.cpp / llama-cpp-python)
+* ✅ Vision — image understanding via Qwen2-VL
+* ✅ Image generation (Stable Diffusion 1.5)
+* ✅ Live internet/web search via Tavily, injected into the model's context
+* ✅ Long-term vector memory (Chroma + sentence-transformers), hierarchical: core identity / long-term
+  facts / recent context
+* ✅ File attachments (text + code files are read into context; images are routed to Vision)
+* ✅ Chat history (SQLite), multi-chat, auto-rename, export, delete
+* ✅ GPU-aware execution (loads/unloads models to stay within VRAM)
 
 ---
 
 ## 🧠 Architecture
 
-### 1. Brain (Decision Engine)
+### 1. Brain (`core/brain.py`)
+Looks at the latest user message (and any attachments) and decides where it should go:
+LLM chat, Vision, Diffusion, or live web Search.
 
-* Detects intent from user input
-* Routes to:
+### 2. Backend Router (`core/backend_router.py`)
+Central execution controller for the LLM, Vision, and Diffusion engines. Coordinates with the GPU
+arbiter so only one heavy model is resident at a time.
 
-  * LLM
-  * Vision
-  * Diffusion
-  * Search
+### 3. Model Loader (`core/model_loader.py`)
+Loads the fine-tuned GGUF model via `llama-cpp-python`, with GPU offloading and streaming generation.
 
----
+### 4. Tavily Search (`core/tavily_search.py`)
+Live internet access. When the Brain detects a query about current events, news, prices, or anything
+time-sensitive, results are fetched from Tavily and injected into the model's system prompt before it
+answers — see **Live internet access** below for setup.
 
-### 2. Backend Router
+### 5. Vector Memory (`core/vector_memory.py`)
+Chroma-backed hierarchical memory (core identity / long-term / episodic), queried on every turn and
+injected into the system prompt when relevant.
 
-* Central execution controller
-* Handles:
+### 6. Vision (`core/vision_qwen.py`)
+Qwen2-VL image understanding — used automatically when an image is attached.
 
-  * Model switching
-  * Streaming generation
-  * Vision pipeline
-  * Diffusion execution
+### 7. Diffusion (`core/image_engine.py`)
+Stable Diffusion 1.5 pipeline with prompt enhancement and thumbnail generation.
 
----
+### 8. UI (`ui/`)
+PySide6 desktop app: streaming chat view (HTML renderer with syntax highlighting), chat sidebar,
+attachments, VRAM monitor. Background generation runs in `ui/llm_worker.py` so the UI never blocks.
 
-### 3. Model Loader
-
-Supports:
-
-* GGUF (llama.cpp)
-* Transformers
-* ONNX
-
-Features:
-
-* Streaming tokens
-* GPU offloading
-* Dynamic load/unload
-
----
-
-### 4. Vision System
-
-* BLIP → image captioning
-* Tesseract → OCR
-* OpenCV → preprocessing
-* SmartLayer → fixes OCR code
-
----
-
-### 5. Diffusion Engine
-
-* Stable Diffusion pipeline
-* Prompt enhancement + style detection
-* Auto thumbnail + base64 rendering
-
----
-
-### 6. UI System (PySide6)
-
-* Streaming chat interface
-* HTML renderer (highlight.js + Dracula theme)
-* Sidebar + chat management
-* Attachment system
-* VRAM monitor
-
----
-
-### 7. Threading (LLM Worker)
-
-* Runs generation in background
-* Streams tokens to UI
-* Prevents UI freeze
-
----
-
-### 8. Chat System
-
-* SQLite database
-* Multi-chat support
-* Auto rename
-* Export / delete
+### 9. Chat storage (`core/chat_manager.py`)
+SQLite-backed chat history: multi-chat support, auto rename, export, delete.
 
 ---
 
@@ -126,11 +71,9 @@ User Input
    ↓
 Brain (intent detection)
    ↓
-Backend Router
+[ LLM | Vision | Diffusion | Tavily Search → LLM ]
    ↓
-[LLM | Vision | Diffusion]
-   ↓
-LLM Worker (streaming)
+LLM Worker (streaming, background thread)
    ↓
 Renderer (HTML UI)
    ↓
@@ -145,31 +88,37 @@ ChatManager (SQLite)
 NOVA/
 │
 ├── core/
-│   ├── brain.py
-│   ├── backend_router.py
-│   ├── model_loader.py
+│   ├── brain.py            # intent routing
+│   ├── backend_router.py   # LLM/vision/diffusion execution
+│   ├── model_loader.py     # GGUF model (llama.cpp)
 │   ├── gpu_manager.py
 │   ├── gpu_arbiter.py
-│   ├── image_engine.py
-│   ├── vision_pipeline.py
-│   ├── vision_engine.py
-│   ├── smart_layer.py
-│   ├── context_memory.py
-│   ├── chat_manager.py
-│   └── ...
+│   ├── image_engine.py     # Stable Diffusion
+│   ├── vision_qwen.py      # Qwen2-VL vision
+│   ├── vector_memory.py    # Chroma vector memory
+│   ├── tavily_search.py    # live web search
+│   └── chat_manager.py     # SQLite chat storage
 │
 ├── ui/
 │   ├── main_window.py
 │   ├── llm_worker.py
 │   ├── renderer.py
+│   ├── jsbridge.py
+│   ├── chat_manager_ui.py
+│   ├── attachment_handler.py
 │   └── static/
 │
-├── models/
-├── outputs/
-├── attachments/
+├── config/
+│   ├── config.py
+│   └── settings.json
 │
-├── nova_desktop.py
+├── models/                 # local model weights (gitignored)
+├── outputs/                # generated images (gitignored)
+├── datasets/                # training data (gitignored, large)
+│
+├── desktop.py               # entry point
 ├── requirements.txt
+├── .env.example
 └── README.md
 ```
 
@@ -187,12 +136,33 @@ source genv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Live internet access (Tavily)
+
+NOVA uses [Tavily](https://tavily.com) for live web search (news, prices, current events, anything the
+Brain decides is time-sensitive). Get a free API key from the Tavily dashboard, then:
+
+```bash
+cp .env.example .env
+# edit .env and set TAVILY_API_KEY=your_key_here
+```
+
+`desktop.py` loads `.env` automatically on startup via `python-dotenv`. Without a key, search-triggered
+queries still work, but the model is told search is unavailable instead of getting live results.
+
+### Local models
+
+Place your models under `models/`:
+
+* `models/gguf/nova_mrblack_q8_0.gguf` — the chat/code model
+* `models/vision/Qwen2-VL-2B-Instruct/` — vision model
+* `models/diffusion/sd15/` — Stable Diffusion 1.5 pipeline
+
 ---
 
 ## ▶️ Run
 
 ```bash
-python nova_desktop.py
+python desktop.py
 ```
 
 ---
@@ -200,9 +170,20 @@ python nova_desktop.py
 ## ⚠️ Requirements
 
 * Python 3.10+
-* NVIDIA GPU (recommended)
-* CUDA (optional but improves performance)
-* Local models (GGUF / diffusion)
+* NVIDIA GPU (recommended; the app runs on CPU but generation will be slow)
+* CUDA (for GPU offloading in llama.cpp / torch)
+* Local models placed as described above
+* A Tavily API key for live search (optional but recommended)
+
+---
+
+## 🧹 Housekeeping
+
+`datasets/`, `models/`, and the various `nova_*` memory/vector-store directories at the repo root hold
+large, machine-generated or personal data — they're excluded via `.gitignore` and should never be
+committed. If any of these were committed to git history before, they should be purged from history
+(e.g. with `git filter-repo`) rather than just removed going forward, since `.gitignore` only affects
+future commits.
 
 ---
 
@@ -211,7 +192,6 @@ python nova_desktop.py
 * [ ] Voice (STT + TTS)
 * [ ] Tool execution layer
 * [ ] Multi-agent system
-* [ ] Vector memory (RAG)
 * [ ] Plugin architecture
 
 ---
